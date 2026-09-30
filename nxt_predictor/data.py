@@ -118,9 +118,18 @@ def fetch_news(ticker: str, company: str = "Nextracker") -> pd.DataFrame:
 
 
 def load_prices_csv(path: str) -> pd.DataFrame:
+    """CSV с ценами: формат Yahoo, Nasdaq.com (Close/Last, $-цены) или свой."""
     df = pd.read_csv(path)
+    df.columns = [c.strip() for c in df.columns]
     date_col = next(c for c in df.columns if c.lower() in ("date", "datetime", "time"))
     df = df.set_index(pd.to_datetime(df.pop(date_col)))
+    aliases = {"close/last": "Close", "price": "Close", "vol.": "Volume"}
+    df = df.rename(columns=lambda c: aliases.get(c.lower(), c))
+    if "Close" not in df and "Adj Close" in df:
+        df = df.rename(columns={"Adj Close": "Close"})
+    for col in df.columns:
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r"[$,\s]", "", regex=True), errors="coerce")
     return _normalize_prices(df)
 
 

@@ -97,3 +97,16 @@ def test_csv_inputs(tmp_path):
     loaded = data.load_prices_csv(str(tmp_path / "p.csv"))
     assert len(loaded) == 300
     assert len(data.load_news_csv(str(tmp_path / "n.csv"))) == len(news)
+
+
+def test_nasdaq_csv_format(tmp_path):
+    p = tmp_path / "nasdaq.csv"
+    p.write_text(
+        "Date,Close/Last,Volume,Open,High,Low\n"
+        "09/29/2026,$77.71,2345678,$76.50,$78.10,$76.20\n"
+        "09/26/2026,$76.40,1987654,$75.90,$77.00,$75.10\n"
+    )
+    df = data.load_prices_csv(str(p))
+    assert list(df.columns) == data.PRICE_COLUMNS
+    assert df.index[0] == pd.Timestamp("2026-09-26")
+    assert df["Close"].iloc[-1] == 77.71
