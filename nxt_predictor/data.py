@@ -13,6 +13,9 @@ log = logging.getLogger(__name__)
 
 PRICE_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 
+# Рынок, солнечный сектор и конкуренты Nextracker — их движения тоже влияют на NXT.
+CONTEXT_TICKERS = ["SPY", "QQQ", "TAN", "FSLR", "ARRY", "SHLS", "ENPH"]
+
 
 def _normalize_prices(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
@@ -26,7 +29,7 @@ def _normalize_prices(df: pd.DataFrame) -> pd.DataFrame:
     return df.sort_index()
 
 
-def fetch_daily_prices(ticker: str, years: int = 5) -> pd.DataFrame:
+def fetch_daily_prices(ticker: str, years: int = 10) -> pd.DataFrame:
     """Дневные OHLCV. Сначала Yahoo Finance, при ошибке — Stooq."""
     try:
         import yfinance as yf
@@ -45,6 +48,17 @@ def fetch_daily_prices(ticker: str, years: int = 5) -> pd.DataFrame:
         raise RuntimeError(f"Не удалось получить цены для {ticker}")
     cutoff = df.index.max() - pd.DateOffset(years=years)
     return _normalize_prices(df[df.index >= cutoff])
+
+
+def fetch_context(tickers: list[str], years: int = 10) -> pd.DataFrame:
+    """Цены закрытия рыночных индексов и конкурентов (колонка = тикер)."""
+    closes = {}
+    for t in tickers:
+        try:
+            closes[t] = fetch_daily_prices(t, years)["Close"]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Нет данных по %s: %s", t, exc)
+    return pd.DataFrame(closes)
 
 
 def fetch_intraday_trades(ticker: str, days: int = 7) -> pd.DataFrame:
@@ -158,6 +172,17 @@ def synthetic_data(days: int = 1000, seed: int = 7) -> tuple[pd.DataFrame, pd.Da
                          "summary": "", "source": "synthetic"})
     news_df = pd.DataFrame(news, columns=["time", "title", "summary", "source"])
     return daily, intraday, news_df
+
+
+def synthetic_context(daily: pd.DataFrame, seed: int = 11) -> pd.DataFrame:
+    """Синтетические рынок и конкуренты, скоррелированные с ценой из synthetic_data."""
+    rng = np.random.default_rng(seed)
+    r = np.log(daily["Close"]).diff().fillna(0).to_numpy()
+    out = {}
+    for t, (beta, noise) in {"SPY": (0.25, 0.008), "QQQ": (0.3, 0.011), "TAN": (0.6, 0.015),
+                             "FSLR": (0.7, 0.025), "ARRY": (0.9, 0.03)}.items():
+        out[t] = 100 * np.exp(np.cumsum(beta * r + rng.normal(0, noise, len(r))))
+    return pd.DataFrame(out, index=daily.index)
 
 
 def now_utc() -> datetime:

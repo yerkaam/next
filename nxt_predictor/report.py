@@ -8,6 +8,15 @@ import pandas as pd
 from .model import Prediction
 
 
+def verdict(bt: dict) -> str:
+    gain = 1 - bt["mae_model"] / bt["mae_naive"]
+    if gain > 0.02 and bt["direction_accuracy"] > 0.53:
+        return f"модель лучше наивного прогноза на {gain:.1%} — прогноз полезен"
+    if gain > 0:
+        return f"модель лишь немного лучше наивного прогноза ({gain:.1%}) — относитесь осторожно"
+    return "модель НЕ лучше прогноза «цена не изменится» — прогнозу не доверять"
+
+
 def text_report(ticker: str, p: Prediction, intraday: dict, news: pd.DataFrame) -> str:
     bt = p.backtest
     arrow = "▲" if p.predicted_return > 0 else "▼"
@@ -27,7 +36,14 @@ def text_report(ticker: str, p: Prediction, intraday: dict, news: pd.DataFrame) 
         "",
         f"Проверка на истории ({bt['days']} дней, walk-forward):",
         f"  средняя ошибка модели {bt['mae_model'] * 100:.2f}% vs «цена не изменится» {bt['mae_naive'] * 100:.2f}%",
-        f"  угадано направление: {bt['direction_accuracy']:.0%} (доля дней роста {bt['share_up_days']:.0%})",
+        f"  угадано направление: регрессия {bt['direction_accuracy']:.0%}, классификатор {bt['classifier_accuracy']:.0%}"
+        f" (доля дней роста {bt['share_up_days']:.0%})",
+        f"  Brier вероятности роста: {bt['brier']:.4f} vs {bt['brier_naive']:.4f} у константы (меньше — лучше)",
+        f"  вердикт: {verdict(bt)}",
+        "",
+        f"Обучено на {p.n_train_days} днях, {p.n_features} признаков. Модели (вес · прогноз):",
+        *[f"  {k:6s} {p.weights[k]:5.1%} · {p.per_model[k] * 100:+.2f}%  параметры {p.params[k] or 'по умолчанию'}"
+          for k in p.weights],
         "",
         "Самые важные признаки: " + ", ".join(k for k, _ in p.top_features[:5]),
     ]
@@ -85,6 +101,11 @@ def html_report(ticker: str, p: Prediction, daily: pd.DataFrame, intraday: dict,
         f"<div class='s'>VWAP ${intraday['vwap']:.2f} · покупки {intraday['buy_pressure']:.0%} · {intraday['minutes']} мин</div></div>"
         if intraday else ""
     )
+    models = "".join(
+        f"<tr><td>{k}</td><td>вес {p.weights[k]:.0%}</td><td>{p.per_model[k] * 100:+.2f}%</td>"
+        f"<td class='s'>{html.escape(str(p.params[k] or 'по умолчанию'))}</td></tr>"
+        for k in p.weights
+    )
     feats = "".join(f"<li>{html.escape(k)} <span class='s'>{v:.1%}</span></li>" for k, v in p.top_features)
     return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{ticker} прогноз цены</title>
@@ -113,7 +134,12 @@ td:first-child{{white-space:nowrap;color:var(--muted)}} ul{{padding-left:18px}}
 <h2>Насколько модели можно верить</h2>
 <p>Walk-forward проверка на последних {bt['days']} днях: средняя ошибка <b>{bt['mae_model'] * 100:.2f}%</b>
 против <b>{bt['mae_naive'] * 100:.2f}%</b> у наивного прогноза «цена не изменится».
-Направление угадано в <b>{bt['direction_accuracy']:.0%}</b> случаев (доля дней роста — {bt['share_up_days']:.0%}).</p>
+Направление угадано в <b>{bt['direction_accuracy']:.0%}</b> случаев регрессией и в <b>{bt['classifier_accuracy']:.0%}</b>
+классификатором (доля дней роста — {bt['share_up_days']:.0%}).</p>
+<p><b>Вердикт:</b> {html.escape(verdict(bt))}.</p>
+<h2>Модели ансамбля</h2>
+<div class="s">Обучено на {p.n_train_days} днях, {p.n_features} признаков. Гиперпараметры подобраны на данных до периода проверки.</div>
+<table>{models}</table>
 <h2>Что влияет сильнее всего</h2><ul>{feats}</ul>
 <h2>Новости и тональность</h2><table>{news_rows}</table>
 </main></body></html>"""

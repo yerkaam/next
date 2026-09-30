@@ -64,7 +64,27 @@ def _rsi(close: pd.Series, n: int = 14) -> pd.Series:
     return 100 - 100 / (1 + up / down.replace(0, np.nan))
 
 
-def build_features(daily: pd.DataFrame, news: pd.DataFrame | None = None) -> pd.DataFrame:
+def context_features(daily: pd.DataFrame, context: pd.DataFrame) -> pd.DataFrame:
+    """Рынок и конкуренты: их доходности, относительная сила NXT, бета и корреляция."""
+    f = pd.DataFrame(index=daily.index)
+    ctx = context.reindex(daily.index).ffill(limit=3)
+    own = np.log(daily["Close"]).diff()
+    for t in ctx.columns:
+        r = np.log(ctx[t]).diff()
+        name = t.lower()
+        f[f"{name}_ret_1"] = r
+        f[f"{name}_ret_5"] = np.log(ctx[t] / ctx[t].shift(5))
+        f[f"rel_{name}_5"] = np.log(daily["Close"] / daily["Close"].shift(5)) - f[f"{name}_ret_5"]
+        if t in ("SPY", "TAN"):
+            cov = own.rolling(60).cov(r)
+            f[f"beta_{name}_60"] = cov / r.rolling(60).var()
+            f[f"corr_{name}_60"] = own.rolling(60).corr(r)
+    return f
+
+
+def build_features(
+    daily: pd.DataFrame, news: pd.DataFrame | None = None, context: pd.DataFrame | None = None
+) -> pd.DataFrame:
     """Таблица признаков на каждый торговый день + целевая переменная target
     (лог-доходность следующего дня)."""
     c, h, l, o, v = daily["Close"], daily["High"], daily["Low"], daily["Open"], daily["Volume"]
@@ -98,6 +118,14 @@ def build_features(daily: pd.DataFrame, news: pd.DataFrame | None = None) -> pd.
     f["obv_slope"] = (np.sign(logret) * v).rolling(10).sum() / v.rolling(10).sum()
 
     f["dow"] = daily.index.dayofweek / 4
+    for n in (5, 20):
+        f[f"up_share_{n}"] = (logret > 0).rolling(n).mean()
+    f["skew_20"] = logret.rolling(20).skew()
+    f["high_52w"] = c / c.rolling(252, min_periods=60).max() - 1
+    f["low_52w"] = c / c.rolling(252, min_periods=60).min() - 1
+
+    if context is not None and not context.empty:
+        f = f.join(context_features(daily, context))
 
     news_f = daily_news_features(news if news is not None else pd.DataFrame(columns=["time", "title", "summary"]), daily.index)
     f = f.join(news_f)

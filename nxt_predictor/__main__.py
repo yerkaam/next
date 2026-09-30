@@ -18,16 +18,23 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Прогноз следующей цены акции по ценам, сделкам и новостям")
     ap.add_argument("--ticker", default="NXT")
     ap.add_argument("--company", default="Nextracker", help="название компании для поиска новостей")
-    ap.add_argument("--years", type=int, default=5, help="сколько лет истории загрузить")
+    ap.add_argument("--years", type=int, default=10, help="сколько лет истории загрузить")
+    ap.add_argument("--context", default=",".join(data.CONTEXT_TICKERS),
+                    help="рынок/конкуренты через запятую; 'none' — не использовать")
+    ap.add_argument("--backtest-days", type=int, default=250, help="длина честной проверки на истории")
+    ap.add_argument("--fast", action="store_true", help="без подбора гиперпараметров (быстрее)")
+    ap.add_argument("-v", "--verbose", action="store_true", help="показывать ход обучения")
     ap.add_argument("--demo", action="store_true", help="синтетические данные, без интернета")
     ap.add_argument("--prices-csv", help="свои дневные цены (Date,Open,High,Low,Close,Volume)")
     ap.add_argument("--news-csv", help="свои новости (time,title[,summary])")
     ap.add_argument("--out", default="output", help="папка для отчётов")
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s: %(message)s")
 
+    context_tickers = [] if args.context.lower() == "none" else [t.strip().upper() for t in args.context.split(",") if t.strip()]
     if args.demo:
         daily, intraday, news = data.synthetic_data()
+        context = data.synthetic_context(daily) if context_tickers else pd.DataFrame()
     else:
         daily = data.load_prices_csv(args.prices_csv) if args.prices_csv else data.fetch_daily_prices(args.ticker, args.years)
         news = data.load_news_csv(args.news_csv) if args.news_csv else data.fetch_news(args.ticker, args.company)
@@ -36,10 +43,14 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             logging.warning("Минутные сделки недоступны: %s", exc)
             intraday = pd.DataFrame()
+        context = data.fetch_context(context_tickers, args.years) if context_tickers else pd.DataFrame()
 
     news = score_news(news)
-    features = build_features(daily, news)
-    pred = predict_next(features, last_close=float(daily["Close"].iloc[-1]))
+    features = build_features(daily, news, context)
+    print(f"Обучение на {len(features.dropna())} днях, {features.shape[1] - 1} признаков"
+          f"{' (быстрый режим)' if args.fast else ', подбор гиперпараметров'}...", flush=True)
+    pred = predict_next(features, last_close=float(daily["Close"].iloc[-1]),
+                        backtest_days=args.backtest_days, fast=args.fast)
     intra = intraday_summary(intraday)
 
     print(text_report(args.ticker, pred, intra, news))
