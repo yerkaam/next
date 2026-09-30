@@ -1,0 +1,59 @@
+"""CLI: python -m nxt_predictor [--ticker NXT] [--demo] [--prices-csv FILE] [--news-csv FILE]"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from pathlib import Path
+
+import pandas as pd
+
+from . import data
+from .features import build_features, intraday_summary, score_news
+from .model import predict_next
+from .report import html_report, text_report
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Прогноз следующей цены акции по ценам, сделкам и новостям")
+    ap.add_argument("--ticker", default="NXT")
+    ap.add_argument("--company", default="Nextracker", help="название компании для поиска новостей")
+    ap.add_argument("--years", type=int, default=5, help="сколько лет истории загрузить")
+    ap.add_argument("--demo", action="store_true", help="синтетические данные, без интернета")
+    ap.add_argument("--prices-csv", help="свои дневные цены (Date,Open,High,Low,Close,Volume)")
+    ap.add_argument("--news-csv", help="свои новости (time,title[,summary])")
+    ap.add_argument("--out", default="output", help="папка для отчётов")
+    args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+
+    if args.demo:
+        daily, intraday, news = data.synthetic_data()
+    else:
+        daily = data.load_prices_csv(args.prices_csv) if args.prices_csv else data.fetch_daily_prices(args.ticker, args.years)
+        news = data.load_news_csv(args.news_csv) if args.news_csv else data.fetch_news(args.ticker, args.company)
+        try:
+            intraday = data.fetch_intraday_trades(args.ticker)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("Минутные сделки недоступны: %s", exc)
+            intraday = pd.DataFrame()
+
+    news = score_news(news)
+    features = build_features(daily, news)
+    pred = predict_next(features, last_close=float(daily["Close"].iloc[-1]))
+    intra = intraday_summary(intraday)
+
+    print(text_report(args.ticker, pred, intra, news))
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{args.ticker}_report.html").write_text(html_report(args.ticker, pred, daily, intra, news), encoding="utf-8")
+    summary = {k: v for k, v in pred.__dict__.items() if k != "backtest"}
+    summary["backtest"] = {k: v for k, v in pred.backtest.items() if k != "series"}
+    summary["intraday"] = intra
+    (out / f"{args.ticker}_prediction.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nОтчёт: {out / f'{args.ticker}_report.html'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
