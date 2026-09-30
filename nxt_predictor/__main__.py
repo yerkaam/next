@@ -49,18 +49,28 @@ def main(argv: list[str] | None = None) -> int:
     features = build_features(daily, news, context)
     print(f"Обучение на {len(features.dropna())} днях, {features.shape[1] - 1} признаков"
           f"{' (быстрый режим)' if args.fast else ', подбор гиперпараметров'}...", flush=True)
-    pred = predict_next(features, last_close=float(daily["Close"].iloc[-1]),
-                        backtest_days=args.backtest_days, fast=args.fast)
+    last_close = float(daily["Close"].iloc[-1])
+    pred = predict_next(features, last_close=last_close, backtest_days=args.backtest_days, fast=args.fast)
+    print("Прогноз цены открытия...", flush=True)
+    pred_open = predict_next(build_features(daily, news, context, target="open"), last_close=last_close,
+                             backtest_days=args.backtest_days, fast=args.fast)
     intra = intraday_summary(intraday)
 
-    print(text_report(args.ticker, pred, intra, news))
+    print(text_report(args.ticker, pred, intra, news, pred_open))
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{args.ticker}_report.html").write_text(html_report(args.ticker, pred, daily, intra, news), encoding="utf-8")
+    (out / f"{args.ticker}_report.html").write_text(html_report(args.ticker, pred, daily, intra, news, pred_open), encoding="utf-8")
     summary = {k: v for k, v in pred.__dict__.items() if k != "backtest"}
     summary["backtest"] = {k: v for k, v in pred.backtest.items() if k != "series"}
     summary["intraday"] = intra
+    summary["open"] = {
+        "predicted_price": pred_open.predicted_price,
+        "low_price": pred_open.low_price,
+        "high_price": pred_open.high_price,
+        "predicted_return": pred_open.predicted_return,
+        "backtest": {k: v for k, v in pred_open.backtest.items() if k != "series"},
+    }
     (out / f"{args.ticker}_prediction.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nОтчёт: {out / f'{args.ticker}_report.html'}")
     return 0

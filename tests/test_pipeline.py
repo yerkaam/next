@@ -110,3 +110,11 @@ def test_nasdaq_csv_format(tmp_path):
     assert list(df.columns) == data.PRICE_COLUMNS
     assert df.index[0] == pd.Timestamp("2026-09-26")
     assert df["Close"].iloc[-1] == 77.71
+
+
+def test_open_target_is_gap_to_next_open():
+    daily, _, _ = data.synthetic_data(days=100)
+    f = build_features(daily, target="open")
+    expected = np.log(daily["Open"].iloc[1] / daily["Close"].iloc[0])
+    assert abs(f["target"].iloc[0] - expected) < 1e-12
+    assert np.isnan(f["target"].iloc[-1])

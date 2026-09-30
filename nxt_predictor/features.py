@@ -83,10 +83,14 @@ def context_features(daily: pd.DataFrame, context: pd.DataFrame) -> pd.DataFrame
 
 
 def build_features(
-    daily: pd.DataFrame, news: pd.DataFrame | None = None, context: pd.DataFrame | None = None
+    daily: pd.DataFrame,
+    news: pd.DataFrame | None = None,
+    context: pd.DataFrame | None = None,
+    target: str = "close",
 ) -> pd.DataFrame:
-    """Таблица признаков на каждый торговый день + целевая переменная target
-    (лог-доходность следующего дня)."""
+    """Таблица признаков на каждый торговый день + целевая переменная target:
+    лог-доходность от сегодняшнего закрытия до закрытия (target="close")
+    или до открытия (target="open") следующего дня."""
     c, h, l, o, v = daily["Close"], daily["High"], daily["Low"], daily["Open"], daily["Volume"]
     logret = np.log(c).diff()
     f = pd.DataFrame(index=daily.index)
@@ -132,7 +136,8 @@ def build_features(
     f["news_sent_3d"] = f["news_sent"].rolling(3, min_periods=1).mean()
     f["news_count_5d"] = f["news_count"].rolling(5, min_periods=1).sum()
 
-    f["target"] = logret.shift(-1)
+    nxt = o.shift(-1) if target == "open" else c.shift(-1)
+    f["target"] = np.log(nxt / c)
     return f.replace([np.inf, -np.inf], np.nan)
 
 

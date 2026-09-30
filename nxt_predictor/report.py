@@ -17,7 +17,7 @@ def verdict(bt: dict) -> str:
     return "модель НЕ лучше прогноза «цена не изменится» — прогнозу не доверять"
 
 
-def text_report(ticker: str, p: Prediction, intraday: dict, news: pd.DataFrame) -> str:
+def text_report(ticker: str, p: Prediction, intraday: dict, news: pd.DataFrame, po: Prediction | None = None) -> str:
     bt = p.backtest
     arrow = "▲" if p.predicted_return > 0 else "▼"
     lines = [
@@ -30,6 +30,9 @@ def text_report(ticker: str, p: Prediction, intraday: dict, news: pd.DataFrame) 
             f"VWAP ${intraday['vwap']:.2f}, давление покупок {intraday['buy_pressure']:.0%}"
         )
     lines += [
+        *([f"Прогноз открытия: ${po.predicted_price:.2f}  {po.predicted_return * 100:+.2f}%  "
+           f"(80%: ${po.low_price:.2f} – ${po.high_price:.2f}; на истории ошибка {po.backtest['mae_model'] * 100:.2f}%"
+           f" vs {po.backtest['mae_naive'] * 100:.2f}% у «открытие = вчерашнее закрытие»)"] if po else []),
         f"Прогноз закрытия: ${p.predicted_price:.2f}  {arrow} {p.predicted_return * 100:+.2f}%",
         f"Диапазон 80%:     ${p.low_price:.2f} – ${p.high_price:.2f}",
         f"Вероятность роста: {p.prob_up:.0%}",
@@ -88,7 +91,9 @@ def _svg_chart(closes: pd.Series, p: Prediction, w: int = 760, h: int = 300) -> 
 </svg>"""
 
 
-def html_report(ticker: str, p: Prediction, daily: pd.DataFrame, intraday: dict, news: pd.DataFrame) -> str:
+def html_report(
+    ticker: str, p: Prediction, daily: pd.DataFrame, intraday: dict, news: pd.DataFrame, po: Prediction | None = None
+) -> str:
     bt = p.backtest
     sign = "up" if p.predicted_return > 0 else "down"
     news_rows = "".join(
@@ -100,6 +105,11 @@ def html_report(ticker: str, p: Prediction, daily: pd.DataFrame, intraday: dict,
         f"<div class='card'><div class='k'>Последняя сделка</div><div class='v'>${intraday['last_price']:.2f}</div>"
         f"<div class='s'>VWAP ${intraday['vwap']:.2f} · покупки {intraday['buy_pressure']:.0%} · {intraday['minutes']} мин</div></div>"
         if intraday else ""
+    )
+    open_card = (
+        f"<div class='card'><div class='k'>Прогноз открытия</div><div class='v'>${po.predicted_price:.2f}</div>"
+        f"<div class='s'>{po.predicted_return * 100:+.2f}% · 80%: ${po.low_price:.2f}–{po.high_price:.2f}</div></div>"
+        if po else ""
     )
     models = "".join(
         f"<tr><td>{k}</td><td>вес {p.weights[k]:.0%}</td><td>{p.per_model[k] * 100:+.2f}%</td>"
@@ -125,6 +135,7 @@ td:first-child{{white-space:nowrap;color:var(--muted)}} ul{{padding-left:18px}}
 <h1>{ticker}: следующая цена</h1>
 <div class="s">Данные по {p.last_date}. Статистическая оценка, не инвестиционная рекомендация.</div>
 <div class="grid">
+{open_card}
 <div class="card"><div class="k">Прогноз закрытия</div><div class="v {sign}">${p.predicted_price:.2f}</div><div class="s {sign}">{p.predicted_return * 100:+.2f}% к ${p.last_close:.2f}</div></div>
 <div class="card"><div class="k">Диапазон 80%</div><div class="v">${p.low_price:.0f}–{p.high_price:.0f}</div><div class="s">${p.low_price:.2f} – ${p.high_price:.2f}</div></div>
 <div class="card"><div class="k">Вероятность роста</div><div class="v">{p.prob_up:.0%}</div><div class="s">по ошибкам модели</div></div>
